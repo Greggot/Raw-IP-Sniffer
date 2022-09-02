@@ -14,6 +14,12 @@ enum Argument
     Amount,
 };
 
+enum Protocol
+{
+    _TCP = 0x06,
+    _UDP = 0x11,
+};
+
 int main(int argc, char* argv[])
 {
     unsigned char buff[0xFFF]{ 0 };
@@ -59,21 +65,52 @@ int main(int argc, char* argv[])
 
         IP::Header header;
         memcpy(&header, buff, sizeof(header));
+        header.length = htons(header.length);
 
         inet_ntop(AF_INET, &(header.source), from, INET_ADDRSTRLEN);
         inet_ntop(AF_INET, &(header.destination), to, INET_ADDRSTRLEN);
 
-
         printf("Version(%u) IHL(%u), DSCP(%u) ECN(%u), \n\
-            length(%u), identification(%u), flags(%u), \n\
+            length(%u), id(%u), flags(%u), \n\
             offset(%u), ttl(%u), protocol(%u) \n\
             %s -> %s, raw:\n",
-            header.version_ihl.Version, header.version_ihl.IHL,
-            header.dscp_ecn.DSCP, header.dscp_ecn.ECN,
+            header.Version, header.IHL,
+            header.DSCP, header.ECN,
             header.length, header.identification,
-            header.flags_offset.flags, header.flags_offset.offset,
+            header.flags, header.offset,
             header.ttl, header.protocol,
             from, to);
+
+        uint8_t* nextheaderptr = buff + sizeof(header) + ((header.IHL - IP::minIHL) * sizeof(uint32_t));
+
+        UDP::Header udphead;
+        TCP::Header tcphead;
+
+        if (header.protocol == _UDP)
+        {
+            memcpy(&udphead, nextheaderptr, sizeof(udphead));
+            udphead.source = htons(udphead.source);
+            udphead.destination = htons(udphead.destination);
+            udphead.length = htons(udphead.length);
+            printf("UDP package: %u -> %u, length(%u), checksum(%04X)\n", udphead.source, udphead.destination, udphead.length, udphead.checksum);
+        }
+        else if (header.protocol == _TCP)
+        {
+            memcpy(&tcphead, nextheaderptr, sizeof(tcphead));
+            tcphead.source = htons(tcphead.source);
+            tcphead.destination = htons(tcphead.destination);
+            printf("TCP package: %u -> %u: ", tcphead.source, tcphead.destination);
+
+            printf("SN(%u), ACKN(%u), offset(%u), reserved(%u)\n\
+                flags(%u %u %u %u %u %u %u %u %u), WinSize(%u),\n\
+                Checksum(%04X), URGptr(%04X) \n",
+                tcphead.sequenceNumber, tcphead.acknowledgmentNumber,
+                tcphead.offset, tcphead.reserved, tcphead.NS, tcphead.CWR, tcphead.ECE,
+                tcphead.URG, tcphead.ACK, tcphead.PSH, tcphead.RST, 
+                tcphead.SYN, tcphead.FIN, tcphead.windowSize, 
+                tcphead.checksum, tcphead.urgentPointer);
+        }
+
 
         for (int i = 0; i < length; ++i)
             printf("%02X ", buff[i]);
