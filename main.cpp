@@ -18,6 +18,9 @@ enum Argument
     Amount,
 };
 
+#define Kilobyte 1024
+constexpr int Megabyte() { return Kilobyte * Kilobyte; }
+
 int main(int argc, char* argv[])
 {
     if (argc < Amount)
@@ -32,6 +35,22 @@ int main(int argc, char* argv[])
         printf("Failed to open log...\n");
         return 0;
     }
+
+    std::thread progress = std::thread([log]() {
+        float size = 0;
+        
+        while (log)
+        {
+            size = ftell(log);
+            printf("\rLog size:");
+            if (size > Megabyte())
+                printf("%.2f MB", size / Megabyte());
+            else
+                printf("%.2f KB", size / Kilobyte);
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    });
+
     auto ip = [&log](const IP::Header& header) {
         char from[INET_ADDRSTRLEN]{ 0 };
         char to[INET_ADDRSTRLEN]{ 0 };
@@ -77,6 +96,7 @@ int main(int argc, char* argv[])
     sniffer.set(_TCP, tcp);
 
     sniffer.StartSniffing();
+    progress.join();
     
     return 0;
 }
