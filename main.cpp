@@ -1,4 +1,5 @@
 #include "main.h"
+#include "RawSocket.hpp"
 
 static inline void ReportAndExit(const char description[])
 {
@@ -14,58 +15,11 @@ enum Argument
     Amount,
 };
 
-enum Protocol
-{
-    _TCP = 0x06,
-    _UDP = 0x11,
-};
-
 int main(int argc, char* argv[])
 {
-    unsigned char buff[0xFFF]{ 0 };
-
-    WSADATA wsa;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
-        ReportAndExit("WSA startup");
-
-    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_IP);
-    if (sock < 0)
-        ReportAndExit("Socket creation");
-
-    sockaddr_in listen;
-    listen.sin_family = AF_INET;
-    stringToIP(argv[IPaddr], listen);
-    listen.sin_port = htons(0);
-
-    if (bind(sock, (sockaddr*)&listen, sizeof(listen)) < 0)
-        ReportAndExit("Bind");
-
-    int optval = 1;
-    if (setsockopt(sock, IPPROTO_IP, IP_HDRINCL, (char*)&optval, sizeof(optval)) < 0)
-        ReportAndExit("IPPROTO_IP set error");
-    int in;
-    if (WSAIoctl(sock, SIO_RCVALL, &optval, sizeof(optval), 0, 0, (LPDWORD)&in, 0, 0) < 0)
-        ReportAndExit("SIO_RCVALL set error");
-
-    char from[INET_ADDRSTRLEN]{ 0 };
-    char to[INET_ADDRSTRLEN]{ 0 };
-
-    sockaddr_in someone;
-    int someonesize = sizeof(someone);
-    int length = 0;
-    while (true)
-    {
-        length = recvfrom(sock, (char*)buff, sizeof(buff), 0, (sockaddr*)&someone, &someonesize);
-        if (length < 0)
-        {
-            closesocket(sock);
-            WSACleanup();
-            ReportAndExit("recvfrom");
-        }
-
-        IP::Header header;
-        memcpy(&header, buff, sizeof(header));
-        header.length = htons(header.length);
+    auto ip = [](const IP::Header& header) {
+        char from[INET_ADDRSTRLEN]{ 0 };
+        char to[INET_ADDRSTRLEN]{ 0 };
 
         inet_ntop(AF_INET, &(header.source), from, INET_ADDRSTRLEN);
         inet_ntop(AF_INET, &(header.destination), to, INET_ADDRSTRLEN);
@@ -80,45 +34,45 @@ int main(int argc, char* argv[])
             header.flags, header.offset,
             header.ttl, header.protocol,
             from, to);
+    };
 
-        uint8_t* nextheaderptr = buff + sizeof(header) + ((header.IHL - IP::minIHL) * sizeof(uint32_t));
+    auto udp = [](const void* data, const size_t size) {
+        UDP::Header header;
 
-        UDP::Header udphead;
-        TCP::Header tcphead;
+        memcpy(&header, data, sizeof(header));
+        header.source = htons(header.source);
+        header.destination = htons(header.destination);
+        header.length = htons(header.length);
 
-        if (header.protocol == _UDP)
-        {
-            memcpy(&udphead, nextheaderptr, sizeof(udphead));
-            udphead.source = htons(udphead.source);
-            udphead.destination = htons(udphead.destination);
-            udphead.length = htons(udphead.length);
-            printf("UDP package: %u -> %u, length(%u), checksum(%04X)\n", udphead.source, udphead.destination, udphead.length, udphead.checksum);
-        }
-        else if (header.protocol == _TCP)
-        {
-            memcpy(&tcphead, nextheaderptr, sizeof(tcphead));
-            tcphead.source = htons(tcphead.source);
-            tcphead.destination = htons(tcphead.destination);
-            printf("TCP package: %u -> %u: ", tcphead.source, tcphead.destination);
+        printf("UDP package: %u -> %u, length(%u), checksum(%04X)\n", header.source, header.destination, header.length, header.checksum);
+    };
 
-            printf("SN(%u), ACKN(%u), offset(%u), reserved(%u)\n\
+    auto tcp = [](const void* data, const size_t size) {
+        TCP::Header header;
+
+        memcpy(&header, data, sizeof(header));
+        header.source = htons(header.source);
+        header.destination = htons(header.destination);
+        printf("TCP package: %u -> %u: ", header.source, header.destination);
+
+        printf("SN(%u), ACKN(%u), offset(%u), reserved(%u)\n\
                 flags(%u %u %u %u %u %u %u %u %u), WinSize(%u),\n\
                 Checksum(%04X), URGptr(%04X) \n",
-                tcphead.sequenceNumber, tcphead.acknowledgmentNumber,
-                tcphead.offset, tcphead.reserved, tcphead.NS, tcphead.CWR, tcphead.ECE,
-                tcphead.URG, tcphead.ACK, tcphead.PSH, tcphead.RST, 
-                tcphead.SYN, tcphead.FIN, tcphead.windowSize, 
-                tcphead.checksum, tcphead.urgentPointer);
-        }
+            header.sequenceNumber, header.acknowledgmentNumber,
+            header.offset, header.reserved, header.NS, header.CWR, header.ECE,
+            header.URG, header.ACK, header.PSH, header.RST,
+            header.SYN, header.FIN, header.windowSize,
+            header.checksum, header.urgentPointer);
+    };
 
+    
+    RawSocket sniffer(argv[IPaddr], 0xFFFF);
 
-        for (int i = 0; i < length; ++i)
-            printf("%02X ", buff[i]);
-        printf("\n");
+    sniffer.set(ip);
+    sniffer.set(_UDP, udp);
+    sniffer.set(_TCP, tcp);
 
-    }
-
-    closesocket(sock);
-    WSACleanup();
-    return 1;
+    sniffer.StartSniffing();
+    
+    return 0;
 }
