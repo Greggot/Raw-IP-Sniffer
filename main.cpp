@@ -65,6 +65,8 @@ int main(int argc, char* argv[])
             header.length, header.identification,
             header.flags, header.offset,
             header.ttl, header.protocol);
+        if (header.protocol != _UDP && header.protocol != _TCP)
+            fprintf(log, "\n");
     };
 
     auto udp = [&log](const void* data, const size_t size) {
