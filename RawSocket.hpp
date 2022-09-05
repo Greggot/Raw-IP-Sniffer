@@ -87,4 +87,6 @@ public:
 
 	void StopSniffing();
 	int getError() const { return error; }
+
+	~RawSocket() { delete[] Buffer; }
 };
